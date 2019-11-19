@@ -9,6 +9,7 @@ import chisel3.experimental.BundleLiterals._
 import chisel3.util._
 
 class NotLiteralException(message: String) extends Exception(message)
+class LiteralValueException(message: String) extends Exception(message)
 class LiteralTypeException(message: String) extends Exception(message)
 class UnpokeableException(message: String) extends Exception(message)
 class UnsupportedOperationException(message: String) extends Exception(message)
@@ -27,27 +28,50 @@ package object tester {
       Context().backend.pokeBits(signal, value)
     }
 
-    def poke(value: T): Unit = (x, value) match {
-      case (x: Bool, value: Bool) => pokeBits(x, value.litValue)
-      // TODO can't happen because of type parameterization
-      case (x: Bool, value: Bits) => throw new LiteralTypeException(s"can only poke signals of type Bool with Bool value")
-      case (x: Bits, value: UInt) => pokeBits(x, value.litValue)
-      case (x: SInt, value: SInt) => pokeBits(x, value.litValue)
-      // TODO can't happen because of type parameterization
-      case (x: Bits, value: SInt) => throw new LiteralTypeException(s"can only poke SInt value into signals of type SInt")
-      case (x: FixedPoint, value: FixedPoint) => {
-        require(x.binaryPoint == value.binaryPoint, "binary point mismatch")
-        pokeBits(x, value.litValue)
+    def checkValue(value: T): Unit = {
+      if (! value.isLit()) {
+        throw new LiteralValueException(
+          s"""Error: UInt ${x.instanceName} was not given a literal value during poke""")
+
       }
-      case (x: Bundle, value: Bundle) => {
-        // TODO: chisel needs to expose typeEquivalent
-        require(x.elements.keys == value.elements.keys)  // TODO: this discards type data =(
-        (x.elements zip value.elements) foreach { case ((_, x), (_, value)) =>
-          x.poke(value)
+    }
+
+    def poke(value: T): Unit = {
+      (x, value) match {
+        case (x: Bool, value2: Bool) =>
+          checkValue(value)
+          pokeBits(x, value.litValue)
+        // TODO can't happen because of type parameterization
+        case (x: Bool, value: Bits) => throw new LiteralTypeException(s"can only poke signals of type Bool with Bool value")
+        case (x: Bits, value2: UInt) =>
+          checkValue(value)
+          pokeBits(x, value2.litValue)
+        case (x: SInt, value: SInt) => pokeBits(x, value.litValue)
+        // TODO can't happen because of type parameterization
+        case (x: Bits, value: SInt) => throw new LiteralTypeException(s"can only poke SInt value into signals of type SInt")
+        case (x: FixedPoint, value2: FixedPoint) => {
+          require(x.binaryPoint == value2.binaryPoint, "binary point mismatch")
+          checkValue(value)
+          pokeBits(x, value.litValue)
         }
+        case (typeBundle: Bundle, valueBundle: Bundle) => {
+          // TODO: chisel needs to expose typeEquivalent
+          require(typeBundle.elements.keys == valueBundle.elements.keys)  // TODO: this discards type data =(
+          (typeBundle.elements zip valueBundle.elements) foreach {
+            case ((fieldName, typeElement), (_, valueElement)) =>
+              if (valueElement.isInstanceOf[Bundle] || valueElement.isLit()) {
+                typeElement.poke(valueElement)
+              } else {
+                val bundleFieldName = typeBundle.instanceName + "." + fieldName
+//                val bundleFieldName = typeBundle.getClass.getCanonicalName + "." + fieldName
+                throw new LiteralValueException(
+                  s"""Error: Bundle field $bundleFieldName was not given a value during poke""")
+              }
+          }
+        }
+        case x => throw new LiteralTypeException(s"don't know how to poke $x")
+        // TODO: aggregate types
       }
-      case x => throw new LiteralTypeException(s"don't know how to poke $x")
-      // TODO: aggregate types
     }
 
     protected def peekWithStale(stale: Boolean): T = x match {

@@ -14,6 +14,11 @@ class BundleLiteralsSpec extends FlatSpec with ChiselScalatestTester with Matche
     val b = UInt(8.W)
   }
 
+  class NestedBundle extends Bundle {
+    val c = UInt(8.W)
+    val d = new DoubleElements
+  }
+
   it should "poke Bundle literals" in {
     test(new Module {
       val io = IO(new Bundle {
@@ -67,6 +72,38 @@ class BundleLiteralsSpec extends FlatSpec with ChiselScalatestTester with Matche
       c.in.poke(chiselTypeOf(c.in).Lit(_.a -> 0.U, _.b -> 1.U))
       c.in.poke(c.out.peek())
       c.out.expect(chiselTypeOf(c.in).Lit(_.a -> 0.U, _.b -> 1.U))
+    }
+  }
+
+  it should "provide helpful exception when a bundle field is missing in poke" in {
+    val caught = intercept[LiteralValueException] {
+      test(new PassthroughModule(new DoubleElements)) { c =>
+        c.in.poke(chiselTypeOf(c.in).Lit(_.a -> 0.U))
+      }
+    }
+    caught.getMessage.contains("Bundle field in.b was not given a value during poke") should be (true)
+  }
+
+  it should "provide helpful exception when a poked UInt value is not a literal" in {
+    val caught = intercept[LiteralValueException] {
+      test(new PassthroughModule(new DoubleElements)) { c =>
+        c.in.a.poke(UInt(8.W))
+      }
+    }
+    caught.getMessage.contains("UInt in.a was not given a literal value during poke") should be (true)
+  }
+
+  it should "round trip nested Bundle literals, showing two ways of declaring sub-bundle" in {
+    test(new PassthroughModule(new NestedBundle)) { dut =>
+
+      dut.in.poke(chiselTypeOf(dut.in).Lit(_.c -> 7.U, _.d -> (chiselTypeOf(dut.in.d).Lit(_.a -> 0.U, _.b -> 1.U))))
+      dut.in.poke(dut.out.peek())
+      dut.in.expect(chiselTypeOf(dut.in).Lit(_.c -> 7.U, _.d -> (chiselTypeOf(dut.in.d).Lit(_.a -> 0.U, _.b -> 1.U))))
+
+      dut.in.poke(chiselTypeOf(dut.in).Lit(_.c -> 7.U, _.d -> (new DoubleElements).Lit(_.a -> 0.U, _.b -> 1.U)))
+      dut.in.poke(dut.out.peek())
+//      dut.in.expect(chiselTypeOf(dut.in).Lit(_.c -> 7.U, _.d -> (new DoubleElements).Lit(_.a -> 0.U, _.b -> 1.U)))
+      dut.in.expect(chiselTypeOf(dut.in).Lit(_.c -> 7.U, _.d -> (new DoubleElements).Lit(_.a -> 0.U, _.b -> 1.U)))
     }
   }
 }
