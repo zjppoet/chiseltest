@@ -19,7 +19,8 @@ private[chiseltest] class JNASimulatorContext(
   toplevel:         TopmoduleInfo,
   override val sim: Simulator,
   args:             Array[String],
-  readCoverageFile: Option[() => List[(String, Long)]] = None)
+  readCoverageFile: Option[() => List[(String, Long)]] = None,
+  appName:  String)
     extends SimulatorContext
     with LazyLogging {
   toplevel.requireNoMultiClock()
@@ -57,13 +58,18 @@ private[chiseltest] class JNASimulatorContext(
     val mask = idToMask(signalId)
     val maskedValue = value & mask
     if (isWide(signal)) {
-      val width = signalWidth(signal)
-      val words = (width + 63) / 64
-      var remaining = maskedValue
-      (0 until words).foreach { ii =>
-        val part = (remaining & mask64).toLong
-        so.pokeWide(signalId, ii, part)
-        remaining = remaining >> 64
+      if(appName.equals("")){
+          val width = signalWidth(signal)
+          val words = (width + 63) / 64
+          var remaining = maskedValue
+          (0 until words).foreach { ii =>
+            val part = (remaining & mask64).toLong
+            so.pokeWide(signalId, ii, part)
+            remaining = remaining >> 64
+          }
+      }
+      else{
+        so.poke2(signalId, value)
       }
     } else {
       so.poke(signalId, maskedValue.toLong)
@@ -77,13 +83,19 @@ private[chiseltest] class JNASimulatorContext(
     val signalId = getId(signal)
     val width = signalWidth(signal)
     val unsigned = if (isWide(signal)) {
-      val words = (width + 63) / 64
-      var value = BigInt(0)
-      (0 until words).foreach { ii =>
-        val word = BigInt(so.peekWide(signalId, ii)) & mask64
-        value = value | (word << (ii * 64))
-      }
-      value
+      //if(appName.equals("")){
+        val words = (width + 63) / 64
+        var value = BigInt(0)
+        (0 until words).foreach { ii =>
+          val word = BigInt(so.peekWide(signalId, ii)) & mask64
+          value = value | (word << (ii * 64))
+        }
+        value
+      //}
+      //else{
+      //  println(s"zjp peek signalId: $signalId ")
+      //  so.peek2(signalId)
+      //}
     } else {
       so.peek(signalId) & mask64
     }

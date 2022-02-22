@@ -14,26 +14,76 @@ private[chiseltest] object VerilatorCppJNAHarnessGenerator {
     targetDir:    os.Path,
     majorVersion: Int,
     minorVersion: Int,
-    verbose:      Boolean
+    verbose:      Boolean,
+    appName:      String
   ): String = {
     val pokeable = toplevel.inputs.zipWithIndex
     val peekable = (toplevel.inputs ++ toplevel.outputs).zipWithIndex
     def fitsIn64Bits(s: (PinInfo, Int)): Boolean = s._1.width <= 64
-
+    def fitsInLongBits(s: (PinInfo, Int)): Boolean = s._1.width > 64
+    
+    def getType(width:Int, signed:Boolean):String={
+      var s_signed= 
+      if(signed==true || width==1)
+          ""
+      else
+          "unsigned "
+      val s_type=
+      if (width==1)
+          "bool"
+      else if(width<=32){
+          "int"
+      }
+      else if(width<=64){
+          "long"
+      }
+      else{
+          s_signed = ""
+          "sc_bv<"+width.toString+">"
+      }
+      s_signed+s_type
+    }
     val codeBuffer = new StringBuilder
     // generate Verilator specific "sim_state" class
     codeBuffer.append(s"""
 struct sim_state {
   TOP_CLASS* dut;
+""")
+  if(!appName.equals("")) codeBuffer.append(s"  cfm_${appName}app* cfmi_CofluentApp;\n")
+codeBuffer.append(s"""
   VERILATED_C* tfp;
   vluint64_t main_time;
+""")
+  if(!appName.equals("")) codeBuffer.append(s"""  sc_clock clk{"clk", 1, SC_NS, 0.5, 3, SC_NS, true};\n""")
 
+  peekable.filter(fitsIn64Bits).foreach { case (PinInfo(name, width, signed), id) =>
+      val s_type = getType(width, signed)
+      if(!appName.equals("")) codeBuffer.append(s"  sc_signal<$s_type> ${name};\n")
+  }
+  peekable.filter(fitsInLongBits).foreach { case (PinInfo(name, width, signed), id) =>
+      val s_type = getType(width, signed)
+      if(!appName.equals("")) codeBuffer.append(s"  sc_signal<$s_type> ${name};\n")
+  }
+codeBuffer.append(s"""
   sim_state() :
-    dut(new TOP_CLASS),
+    dut(new TOP_CLASS("dut")),
+""")
+    if(!appName.equals("")) codeBuffer.append(s"""    cfmi_CofluentApp(new cfm_${appName}app("CofluentApp")),\n""")
+codeBuffer.append(s"""
     tfp(nullptr),
     main_time(0)
   {
     // std::cout << "Allocating! " << ((long long) dut) << std::endl;
+""")
+    if(!appName.equals("")) codeBuffer.append(s"    dut->clock(clk);\n")
+
+    peekable.filter(fitsIn64Bits).foreach { case (PinInfo(name, _, _), id) =>
+      if(!appName.equals("")) codeBuffer.append(s"    dut->${name}($name);\n")
+    }
+    peekable.filter(fitsInLongBits).foreach { case (PinInfo(name, _, _), id) =>
+      if(!appName.equals("")) codeBuffer.append(s"    dut->${name}($name);\n")
+    }
+codeBuffer.append(s"""
   }
 
   inline int64_t step(int32_t cycles) {
@@ -46,10 +96,14 @@ struct sim_state {
     }
     return (int64_t)cycles;
   }
-  inline void update() { dut->eval(); }
+  inline void update() { }//sc_start(1,SC_NS);
   inline void finish() {
-    dut->eval();
-    _finish(tfp, dut);
+""")
+    if(!appName.equals("")) 
+        codeBuffer.append(s"    _finish(tfp, dut,cfmi_CofluentApp);\n")
+    else
+        codeBuffer.append(s"    _finish(tfp, dut);\n")
+codeBuffer.append(s"""
   }
   inline void resetCoverage() { VerilatedCov::zero(); }
   inline void writeCoverage(const char* filename) {
@@ -57,11 +111,12 @@ struct sim_state {
   }
   inline void poke(int32_t id, int64_t value) {
     const uint64_t u = value;
-    // std::cout << "poking: " << std::hex << u << std::endl;
+    //std::cout << "poking: " << std::hex << u <<",id:"<<id<< std::endl;
     switch(id) {
 """)
     pokeable.filter(fitsIn64Bits).foreach { case (PinInfo(name, _, _), id) =>
-      codeBuffer.append(s"      case $id : dut->$name = u; break;\n")
+      if(!appName.equals("")) codeBuffer.append(s"      case $id : ${name}.write(value);break;\n")
+      else codeBuffer.append(s"      case $id : dut->$name = u; break;\n")
     }
     codeBuffer.append(s"""
     default:
@@ -75,7 +130,8 @@ struct sim_state {
     switch(id) {
 """)
     peekable.filter(fitsIn64Bits).foreach { case (PinInfo(name, _, _), id) =>
-      codeBuffer.append(s"      case $id : value = dut->$name; break;\n")
+      if(!appName.equals("")) codeBuffer.append(s"      case $id : value = ${name}.read(); break;\n")
+      else codeBuffer.append(s"      case $id : value = dut->$name; break;\n")
     }
     codeBuffer.append(s"""
     default:
@@ -86,6 +142,14 @@ struct sim_state {
     // std::cout << "peeking: " << std::hex << value << std::endl;
     return value;
   }
+""")
+if(!appName.equals("")) {
+codeBuffer.append(s"""
+  inline void poke_wide(int32_t id, int32_t offset, int64_t value) {}
+""") 
+}
+else{
+codeBuffer.append(s"""
   inline void poke_wide(int32_t id, int32_t offset, int64_t value) {
     const uint64_t u = value;
     WData* data = nullptr;
@@ -114,6 +178,77 @@ struct sim_state {
       data[secondWord] = (u >> 32) & 0xffffffffu;
     }
   }
+""")
+}
+codeBuffer.append(s"""
+  inline void poke2(int32_t id, const char* value) {
+    sc_biguint<256> v(value);
+    switch(id) {
+""")
+    pokeable.filter(fitsInLongBits).foreach { case (PinInfo(name, width, _), id) =>
+      codeBuffer.append(s"      case $id : ${name}.write(v);break;\n")
+    }
+    codeBuffer.append(s"""
+    default:
+      std::cerr << "Cannot find the object of id = " << id << std::endl;
+      finish();
+      break;
+    }
+  }
+""")
+if(!appName.equals("")) {
+codeBuffer.append(s"""
+  inline const char* peek2(int32_t id) {
+    sc_bv<256> value = 0;
+    int32_t remaining = 0;
+    switch(id) {
+""")
+    peekable.filter(fitsInLongBits).foreach { case (PinInfo(name, width, _), id) =>
+      codeBuffer.append(s"      case $id : value = ${name}.read(); \n               remaining = 256-${width};\n               value = (value<<remaining)>>remaining;\n               break;\n")
+    }
+    codeBuffer.append(s"""
+    default:
+      std::cerr << "Cannot find the object of id = " << id << std::endl;
+      finish();
+      return "-1";
+    }
+    std::string ss = value.to_string();
+    return ss.c_str();
+  }
+
+  inline int64_t peek_wide(int32_t id, int32_t offset) {
+    sc_bv<256> value(0);
+    size_t words = 0;
+    switch(id) {
+""")
+    peekable.filter(fitsInLongBits).foreach { case (PinInfo(name, width, _), id) =>
+      val numWords = (width - 1) / 32 + 1
+      //codeBuffer.append(s"      case $id : value = ${name}.read(); \n               words = $numWords;\n               remaining = 256-${width};\n               value = (value<<remaining)>>remaining;\n               break;\n")
+      codeBuffer.append(s"      case $id : value = ${name}.read(); words = $numWords; break;\n")
+      }
+codeBuffer.append(s"""
+    default:
+      std::cerr << "Cannot find the object of id = " << id << std::endl;
+      finish();
+      return -1;
+    }
+    const size_t firstWord = offset * 2;
+    const size_t secondWord = firstWord + 1;
+    if(firstWord >= words || firstWord < 0) {
+      std::cerr << "Out of bounds index for id = " << id << " index = " << offset << std::endl;
+      finish();
+      return -1;
+    } else if(secondWord >= words) {
+      return (uint64_t)value.get_word(firstWord);
+    } else {
+      //std::cout<<"zjp2 value else:"<<hex<<value<<",data:"<<hex<<((((uint64_t)value.get_word(secondWord)) << 32) | ((uint64_t)value.get_word(firstWord)))<<std::endl;
+      return (((uint64_t)value.get_word(secondWord)) << 32) | ((uint64_t)value.get_word(firstWord));
+    }
+  }
+""") 
+}
+else{
+codeBuffer.append(s"""
   inline int64_t peek_wide(int32_t id, int32_t offset) {
     WData* data = nullptr;
     size_t words = 0;
@@ -123,7 +258,7 @@ struct sim_state {
       val numWords = (width - 1) / 32 + 1
       codeBuffer.append(s"      case $id : data = dut->$name; words = $numWords; break;\n")
     }
-    codeBuffer.append(s"""
+codeBuffer.append(s"""
     default:
       std::cerr << "Cannot find the object of id = " << id << std::endl;
       finish();
@@ -141,7 +276,9 @@ struct sim_state {
       return (((uint64_t)data[secondWord]) << 32) | ((uint64_t)data[firstWord]);
     }
   }
-
+""")
+}
+codeBuffer.append(s"""
   inline void set_args(int32_t argc, const char** argv) {
     Verilated::commandArgs(argc, argv);
   }
@@ -156,7 +293,7 @@ static sim_state* create_sim_state() {
 """)
 
     val jnaCode = JNAUtils.genJNACppCode(codeBuffer.toString())
-    commonCodeGen(toplevel, targetDir, majorVersion, minorVersion, verbose) + jnaCode
+    commonCodeGen(toplevel, targetDir, majorVersion, minorVersion, verbose, appName) + jnaCode
   }
 
   private def commonCodeGen(
@@ -164,7 +301,8 @@ static sim_state* create_sim_state() {
     targetDir:    os.Path,
     majorVersion: Int,
     minorVersion: Int,
-    verbose:      Boolean
+    verbose:      Boolean,
+    appName:      String
   ): String = {
     val dutName = toplevel.name
     val dutVerilatorClassName = "V" + dutName
@@ -191,6 +329,8 @@ static sim_state* create_sim_state() {
     val codeBuffer = new StringBuilder
     codeBuffer.append(s"""#include "$dutVerilatorClassName.h"
                          |#include "verilated.h"
+                         |#include <sysc/datatypes/int/sc_bigint.h>
+                         |#include <sysc/datatypes/bit/sc_bv.h>
                          |
                          |#define TOP_CLASS $dutVerilatorClassName
                          |
@@ -202,16 +342,20 @@ static sim_state* create_sim_state() {
                          |
                          |#if VM_TRACE
                          |#if VM_TRACE_FST
-                         |  #include "verilated_fst_c.h"
+                         |  #include "verilated_fst_sc.h"
                          |  #define VERILATED_C VerilatedFstC
                          |#else // !(VM_TRACE_FST)
-                         |  #include "verilated_vcd_c.h"
+                         |  #include "verilated_vcd_sc.h"
                          |  #define VERILATED_C VerilatedVcdC
                          |#endif
                          |#else // !(VM_TRACE)
                          |  #define VERILATED_C VerilatedVcdC
                          |#endif
                          |#include <iostream>
+    |""".stripMargin)
+                         if(!appName.equals("")) 
+                             codeBuffer.append(s"""|#include "cfm_${appName}app_top.h"\n""".stripMargin)
+    codeBuffer.append(s"""
                          |
                          |
                          |// Override Verilator definition so first $$finish ends simulation
@@ -250,21 +394,25 @@ static sim_state* create_sim_state() {
                          |#endif
                          |#if VM_TRACE
                          |    if (verbose) VL_PRINTF(\"Enabling waves..\\n\");
-                         |    *tfp = new VERILATED_C;
+                         |    *tfp = new VerilatedVcdSc;
                          |    top->trace(*tfp, 99);
                          |    (*tfp)->open(dumpfile.c_str());
                          |#endif
                          |}
                          |
                          |static int64_t _step(VERILATED_C* tfp, TOP_CLASS* top, vluint64_t& main_time) {
-                         |    $clockLow
-                         |    top->eval();
+    |""".stripMargin)
+                         if(appName.equals("")) codeBuffer.append(s"""|    $clockLow\n|    top->eval();\n""".stripMargin)
+    codeBuffer.append(s"""           
                          |#if VM_TRACE
                          |    if (tfp) tfp->dump(main_time);
                          |#endif
                          |    main_time++;
-                         |    $clockHigh
-                         |    top->eval();
+    |""".stripMargin)
+                         if(appName.equals("")) codeBuffer.append(s"""|    $clockHigh\n|    top->eval();\n""".stripMargin)
+                         else codeBuffer.append(s"""|    sc_start(1,SC_NS);\n""".stripMargin)
+    codeBuffer.append(s""" 
+                         
                          |#if VM_TRACE
                          |    if (tfp) tfp->dump(main_time);
                          |#endif
@@ -285,7 +433,12 @@ static sim_state* create_sim_state() {
                          |    return 0;
                          |}
                          |
-                         |static void _finish(VERILATED_C* tfp, TOP_CLASS* top) {
+    |""".stripMargin)
+                         if(!appName.equals("")) 
+                             codeBuffer.append(s"|static void _finish(VERILATED_C* tfp, TOP_CLASS* top, cfm_${appName}app* app) {\n".stripMargin)
+                         else
+                             codeBuffer.append(s"|static void _finish(VERILATED_C* tfp, TOP_CLASS* top) {\n".stripMargin)
+    codeBuffer.append(s"""
                          |#if VM_TRACE
                          |  if (tfp) tfp->close();
                          |  delete tfp;
@@ -296,8 +449,11 @@ static sim_state* create_sim_state() {
                          |  top->final();
                          |  // TODO: re-enable!
                          |  // delete top;
+    |""".stripMargin)
+                         if(!appName.equals("")) codeBuffer.append(s"|delete app;\n".stripMargin)
+                         codeBuffer.append(s"""
                          |}
-                         |""".stripMargin)
+    |""".stripMargin)
 
     codeBuffer.toString()
   }

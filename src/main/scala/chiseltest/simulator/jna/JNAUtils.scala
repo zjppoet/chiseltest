@@ -3,6 +3,7 @@
 package chiseltest.simulator.jna
 import com.sun.jna._
 import scala.collection.JavaConverters
+import java.math.BigInteger;
 
 object JNAUtils {
   def javaHome: String = System.getProperty("java.home") match {
@@ -43,6 +44,8 @@ object JNAUtils {
     ("void", "poke", Seq("id" -> "int", "value" -> "long")),
     ("long", "peek", Seq("id" -> "int")),
     ("void", "poke_wide", Seq("id" -> "int", "offset" -> "int", "value" -> "long")),
+    ("void", "poke2", Seq("id" -> "int", "value" -> "String")),
+    ("String", "peek2", Seq("id" -> "int")),
     ("long", "peek_wide", Seq("id" -> "int", "offset" -> "int")),
     ("void", "set_args", Seq("argc" -> "int", "argv" -> "const char**"))
   )
@@ -60,7 +63,18 @@ object JNAUtils {
     val libCopy = libPath / os.up / (libPath.last + s"_$getUniqueId")
     os.copy.over(libPath, to = libCopy)
     // dlopen options: RTLD_NOW
-    val opts = JavaConverters.mapAsJavaMap(Map(Library.OPTION_OPEN_FLAGS -> 2))
+    /*
+    public static final int
+             RTLD_LOCAL      = 0x00000,
+             RTLD_LAZY       = 0x00001,
+             RTLD_NOW        = 0x00002,
+             RTLD_BINDING_MASK   = 0x3,
+             RTLD_NOLOAD     = 0x00004,
+             RTLD_DEEPBIND   = 0x00008,
+             RTLD_GLOBAL     = 0x00100,
+             RTLD_NODELETE   = 0x01000;
+    */
+    val opts = JavaConverters.mapAsJavaMap(Map(Library.OPTION_OPEN_FLAGS -> 1))
     val so = NativeLibrary.getInstance(libCopy.toString(), opts)
     val initFoo = so.getFunction("sim_init")
     val sPtr = initFoo.invokePointer(Array())
@@ -72,6 +86,7 @@ object JNAUtils {
     case "string" => "const char*"
     case "int"    => "int32_t"
     case "long"   => "int64_t"
+    case "bigint"   => "sc_bigint<256>"
     case other    => other
   }
 
@@ -98,6 +113,7 @@ object JNAUtils {
       val retTpe = cType(ret)
       val decl = s"_EXPORT $retTpe $name($argDecl) {\n"
       val callRet = if (ret == "void") "" else "return "
+      //val peekStr = if (name == "peek2") ".c_str()" else ""
       val call = "  " + callRet + s"((sim_state*)s)->$name(" + args.map(_._1).mkString(", ") + ");\n"
       decl + call + "}\n"
     }.mkString("\n")
@@ -139,6 +155,18 @@ class TesterSharedLibInterface(so: NativeLibrary, sPtr: Pointer) {
   private val pokeWideFoo = so.getFunction("poke_wide")
   def pokeWide(id: Int, offset: Int, value: Long): Unit = {
     pokeWideFoo.invoke(Array(sPtr, Integer.valueOf(id), Integer.valueOf(offset), Long.box(value)))
+  }
+  private val pokeFoo2 = so.getFunction("poke2")
+  def poke2(id: Int, value: BigInt): Unit = {
+    val vv= value.toString(10)
+    //println(s"zjp poke2: $vv")
+    pokeFoo2.invoke(Array(sPtr, Integer.valueOf(id), value.toString(10)))
+  }
+  private val peekFoo2 = so.getFunction("peek2")
+  def peek2(id: Int): BigInt = {
+    val value = new String(peekFoo2.invokeString(Array(sPtr, Integer.valueOf(id)),false))
+    //println(s"zjp peek2 value: $value ")
+    new BigInteger(value,2)
   }
   private val peekWideFoo = so.getFunction("peek_wide")
   def peekWide(id: Int, offset: Int): Long = {

@@ -123,6 +123,7 @@ case object WriteFsdbAnnotation extends WriteWaveformAnnotation {
 }
 
 case class PlusArgsAnnotation(plusArgs: Seq[String]) extends NoTargetAnnotation
+case class CofluentAppNameAnnotation(appName: String) extends NoTargetAnnotation
 
 /** enables more verbose print outs from the simulator creation and execution
   * that might be helpful in debugging simulator behavior
