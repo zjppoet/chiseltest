@@ -54,7 +54,7 @@ codeBuffer.append(s"""
   VERILATED_C* tfp;
   vluint64_t main_time;
 """)
-  if(!appName.equals("")) codeBuffer.append(s"""  sc_clock clk{"clk", 1, SC_NS, 0.5, 3, SC_NS, true};\n""")
+  if(!appName.equals("")) codeBuffer.append(s"""  sc_clock clk{"clk", 1, SC_NS, 0.5, 0, SC_NS, true};\n""")
 
   peekable.filter(fitsIn64Bits).foreach { case (PinInfo(name, width, signed), id) =>
       val s_type = getType(width, signed)
