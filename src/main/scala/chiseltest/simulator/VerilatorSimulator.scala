@@ -222,7 +222,7 @@ private object VerilatorSimulator extends Simulator {
   private def CofluentFlags(appName: String) = List(
     "-I"++os.pwd.toString()+"/"+appName+"App/include",
     "-I"+os.pwd.toString()+"/include/cofluent",
-    "-I"+os.pwd.toString()+"/external/include"
+    "-I"+os.pwd.toString()+"/"+appName+"App/external/include"
   )
 
   private def DefaultFlags(topName: String, verilatedDir: os.Path, cFlags: Seq[String], ldFlags: Seq[String], appName: String) = List(
