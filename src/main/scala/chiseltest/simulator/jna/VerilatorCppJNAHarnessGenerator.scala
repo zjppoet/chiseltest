@@ -286,7 +286,7 @@ codeBuffer.append(s"""
 
 static sim_state* create_sim_state() {
   sim_state *s = new sim_state();
-  std::string dumpfile = "${vcdFilePath}";
+  std::string dumpfile = R"(${vcdFilePath})";
   _startCoverageAndDump(&s->tfp, dumpfile, s->dut);
   return s;
 }
@@ -444,7 +444,7 @@ static sim_state* create_sim_state() {
                          |  delete tfp;
                          |#endif
                          |#if VM_COVERAGE
-                         |  VerilatedCov::write("$targetDir/coverage.dat");
+                         |  VerilatedCov::write(R"($targetDir/coverage.dat)");
                          |#endif
                          |  top->final();
                          |  // TODO: re-enable!
