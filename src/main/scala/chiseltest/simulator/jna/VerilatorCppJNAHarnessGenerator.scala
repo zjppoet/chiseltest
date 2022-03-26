@@ -180,6 +180,7 @@ codeBuffer.append(s"""
   }
 """)
 }
+if(!appName.equals("")) {
 codeBuffer.append(s"""
   inline void poke2(int32_t id, const char* value) {
     sc_biguint<256> v(value);
@@ -196,6 +197,12 @@ codeBuffer.append(s"""
     }
   }
 """)
+}
+else{
+codeBuffer.append(s"""
+  inline void poke2(int32_t id, const char* value) {}
+""")
+}
 if(!appName.equals("")) {
 codeBuffer.append(s"""
   inline const char* peek2(int32_t id) {
@@ -249,6 +256,7 @@ codeBuffer.append(s"""
 }
 else{
 codeBuffer.append(s"""
+  inline const char* peek2(int32_t id) {}
   inline int64_t peek_wide(int32_t id, int32_t offset) {
     WData* data = nullptr;
     size_t words = 0;
@@ -327,10 +335,11 @@ static sim_state* create_sim_state() {
     }
 
     val codeBuffer = new StringBuilder
-    codeBuffer.append(s"""#include "$dutVerilatorClassName.h"
+    if(!appName.equals("")) 
+      codeBuffer.append(s"""#include <sysc/datatypes/int/sc_bigint.h>\n|#include <sysc/datatypes/bit/sc_bv.h>""".stripMargin)
+    codeBuffer.append(s"""
+                         |#include "$dutVerilatorClassName.h"
                          |#include "verilated.h"
-                         |#include <sysc/datatypes/int/sc_bigint.h>
-                         |#include <sysc/datatypes/bit/sc_bv.h>
                          |
                          |#define TOP_CLASS $dutVerilatorClassName
                          |
@@ -342,14 +351,19 @@ static sim_state* create_sim_state() {
                          |
                          |#if VM_TRACE
                          |#if VM_TRACE_FST
-                         |  #include "verilated_fst_sc.h"
-                         |  #define VERILATED_C VerilatedFstC
-                         |#else // !(VM_TRACE_FST)
-                         |  #include "verilated_vcd_sc.h"
-                         |  #define VERILATED_C VerilatedVcdC
-                         |#endif
+    |""".stripMargin)
+    if(!appName.equals("")) 
+      codeBuffer.append(s"""|  #include "verilated_fst_sc.h"\n|  #define VERILATED_C VerilatedFstSc\n|#else // !(VM_TRACE_FST)\n|  #include "verilated_vcd_sc.h"\n|  #define VERILATED_C VerilatedVcdSc\n""".stripMargin)
+    else
+      codeBuffer.append(s"""|  #include "verilated_fst_c.h"\n|  #define VERILATED_C VerilatedFstC\n|#else // !(VM_TRACE_FST)\n|  #include "verilated_vcd_c.h"\n|  #define VERILATED_C VerilatedVcdC\n""".stripMargin)                                
+    codeBuffer.append(s"""|#endif
                          |#else // !(VM_TRACE)
-                         |  #define VERILATED_C VerilatedVcdC
+    |""".stripMargin)
+      if(!appName.equals("")) 
+        codeBuffer.append(s"""|  #define VERILATED_C VerilatedVcdSc""".stripMargin)
+      else
+        codeBuffer.append(s"""|  #define VERILATED_C VerilatedVcdC""".stripMargin)
+    codeBuffer.append(s"""
                          |#endif
                          |#include <iostream>
     |""".stripMargin)
@@ -394,7 +408,7 @@ static sim_state* create_sim_state() {
                          |#endif
                          |#if VM_TRACE
                          |    if (verbose) VL_PRINTF(\"Enabling waves..\\n\");
-                         |    *tfp = new VerilatedVcdSc;
+                         |    *tfp = new VERILATED_C;
                          |    top->trace(*tfp, 99);
                          |    (*tfp)->open(dumpfile.c_str());
                          |#endif
